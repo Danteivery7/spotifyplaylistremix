@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env
+.env.local
+*.log
+.DS_Store
+__pycache__/
+.pytest_cache/
+.venv/
+engine/output/
+engine/models/
+media/
