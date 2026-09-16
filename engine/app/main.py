@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .analyzer import analyze_tracks
 from .library import resolve_playlist
@@ -34,7 +35,12 @@ def process_job(job_id: str, request: CreateJobRequest) -> None:
         update(job_id, state=JobState.resolving, message="Resolving authorized audio files…")
         resolved, missing = resolve_playlist(request.playlist)
         if missing:
-            update(job_id, state=JobState.blocked, message="Some playlist tracks are not present in the authorized media library.", missing_tracks=missing)
+            update(
+                job_id,
+                state=JobState.blocked,
+                message="Some playlist tracks are not present in the authorized media library.",
+                missing_tracks=missing,
+            )
             return
 
         update(job_id, state=JobState.analyzing, message=f"Analyzing {len(resolved)} tracks for tempo, key and energy…")
@@ -81,3 +87,29 @@ def get_job(job_id: str) -> JobStatus:
     if job_id not in JOBS:
         raise HTTPException(status_code=404, detail="Job not found.")
     return JOBS[job_id]
+
+
+@app.get("/jobs/{job_id}/download/{kind}")
+def download_job_output(job_id: str, kind: str):
+    if job_id not in JOBS:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if kind not in {"audio", "video"}:
+        raise HTTPException(status_code=400, detail="kind must be audio or video.")
+
+    job = JOBS[job_id]
+    if job.state != JobState.complete:
+        raise HTTPException(status_code=409, detail="The mix is not ready to download yet.")
+
+    output = job.output_audio if kind == "audio" else job.output_video
+    if not output:
+        raise HTTPException(status_code=404, detail=f"No {kind} output is available for this job.")
+
+    output_root = Path(os.getenv("OUTPUT_PATH", "./output")).resolve()
+    path = Path(output).resolve()
+    if path != output_root and output_root not in path.parents:
+        raise HTTPException(status_code=403, detail="Output path is outside the configured output directory.")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Rendered file was not found on disk.")
+
+    media_type = "audio/mp4" if kind == "audio" else "video/mp4"
+    return FileResponse(path=path, media_type=media_type, filename=path.name)
