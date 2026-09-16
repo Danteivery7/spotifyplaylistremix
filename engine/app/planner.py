@@ -252,6 +252,7 @@ def plan_mix(tracks: list[ResolvedTrack], settings: RemixSettings) -> list[MixCl
                 use_instrumental_intro=False,
                 section_label=section_label,
                 transition_note=note,
+                image_url=track.image_url,
             )
         )
 
