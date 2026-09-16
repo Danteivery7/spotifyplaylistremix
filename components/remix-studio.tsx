@@ -40,6 +40,7 @@ type RemixJob = {
 const RUNNING_STATES = ["queued", "resolving", "analyzing", "planning", "rendering", "mastering"];
 
 function formatDuration(ms: number) {
+  if (!ms || ms <= 0) return "—";
   const total = Math.floor(ms / 1000);
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
@@ -63,6 +64,7 @@ function jobLabel(state: string) {
 
 export default function RemixStudio() {
   const [spotifyConnected, setSpotifyConnected] = useState<boolean | null>(null);
+  const [spotifyConfigured, setSpotifyConfigured] = useState(false);
   const [playlistUrl, setPlaylistUrl] = useState("");
   const [playlist, setPlaylist] = useState<PlaylistPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,8 +86,7 @@ export default function RemixStudio() {
     : null;
 
   const workflow = [
-    { label: "Connect Spotify", done: spotifyConnected === true, active: spotifyConnected === false },
-    { label: "Load playlist", done: Boolean(playlist), active: spotifyConnected === true && !playlist },
+    { label: "Load playlist", done: Boolean(playlist), active: !playlist },
     { label: "Create mix", done: Boolean(job), active: Boolean(playlist) && !job },
     { label: "Download", done: job?.state === "complete", active: Boolean(job) && job?.state !== "complete" }
   ];
@@ -95,10 +96,15 @@ export default function RemixStudio() {
     fetch("/api/spotify/status", { cache: "no-store" })
       .then((response) => response.json())
       .then((body) => {
-        if (!cancelled) setSpotifyConnected(Boolean(body.connected));
+        if (cancelled) return;
+        setSpotifyConnected(Boolean(body.connected));
+        setSpotifyConfigured(Boolean(body.configured));
       })
       .catch(() => {
-        if (!cancelled) setSpotifyConnected(false);
+        if (!cancelled) {
+          setSpotifyConnected(false);
+          setSpotifyConfigured(false);
+        }
       });
     return () => { cancelled = true; };
   }, []);
@@ -120,10 +126,6 @@ export default function RemixStudio() {
   }
 
   async function importPlaylist() {
-    if (!spotifyConnected) {
-      setError("Connect Spotify first. Then you can load the playlist link.");
-      return;
-    }
     if (!playlistUrl.trim()) {
       setError("Paste a Spotify playlist link first.");
       return;
@@ -142,10 +144,7 @@ export default function RemixStudio() {
       });
       const body = await response.json();
       if (!response.ok) {
-        if (response.status === 401) {
-          setSpotifyConnected(false);
-          throw new Error("Spotify needs to be connected again before this playlist can be loaded.");
-        }
+        if (response.status === 401) setSpotifyConnected(false);
         throw new Error(body.error ?? "Could not load that playlist.");
       }
       setPlaylist(body);
@@ -215,20 +214,20 @@ export default function RemixStudio() {
         </a>
         <div className="topActions">
           {playlist && <button className="textButton" onClick={startOver}>Start Over</button>}
-          <span className={`connectionPill ${spotifyConnected ? "connected" : ""}`}>
+          <span className="connectionPill connected">
             <span className="connectionDot" />
-            {spotifyConnected === null ? "Checking Spotify…" : spotifyConnected ? "Spotify connected" : "Spotify not connected"}
+            {spotifyConnected ? "Spotify connected" : "Public playlists ready"}
           </span>
         </div>
       </header>
 
       <section className="hero" id="start-section">
         <div className="eyebrow">Automatic long-form playlist mixing</div>
-        <h1>One playlist link. One finished mix.</h1>
-        <p className="sub">Connect Spotify, paste your playlist, and press one button. The engine maps beats, bars, phrases and song sections, chooses musically compatible transitions, protects vocals when stems are available, and masters the finished mix automatically.</p>
+        <h1>One public playlist link. One finished mix.</h1>
+        <p className="sub">Paste a public Spotify playlist and press one button. No Spotify login or developer credentials are required for the normal public-playlist flow. The engine handles phrases, sections, transitions, stems and mastering underneath.</p>
       </section>
 
-      <nav className="progressNav" aria-label="Remix progress">
+      <nav className="progressNav" aria-label="Remix progress" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {workflow.map((step, index) => (
           <div className={`progressStep ${step.done ? "done" : ""} ${step.active ? "active" : ""}`} key={step.label}>
             <span className="progressNumber">{step.done ? "✓" : index + 1}</span>
@@ -241,32 +240,30 @@ export default function RemixStudio() {
         <div className="actionStep">
           <div className="actionNumber">1</div>
           <div className="actionCopy">
-            <h2>Connect Spotify</h2>
-            <p>This lets the app read the playlist you choose. You only need to reconnect if the session expires.</p>
-          </div>
-          {spotifyConnected ? <div className="successBadge">✓ Connected</div> : <a className="primary actionButton" href="/api/spotify/login">Connect Spotify</a>}
-        </div>
-        <div className="actionDivider" />
-        <div className="actionStep">
-          <div className="actionNumber">2</div>
-          <div className="actionCopy">
-            <h2>Paste your playlist</h2>
-            <p>Load the playlist so you can confirm the songs before the engine starts processing audio.</p>
+            <h2>Paste a public Spotify playlist</h2>
+            <p>Use the normal Share → Copy link from Spotify. Public playlists load directly without signing in.</p>
             <div className="inputRow">
-              <input className="urlInput" value={playlistUrl} onChange={(event) => setPlaylistUrl(event.target.value)} onKeyDown={(event) => event.key === "Enter" && importPlaylist()} placeholder="https://open.spotify.com/playlist/..." aria-label="Spotify playlist URL" disabled={!spotifyConnected || loading} />
-              {spotifyConnected ? <button className="primary" onClick={importPlaylist} disabled={loading || !playlistUrl.trim()}>{loading ? "Loading Playlist…" : "Load Playlist"}</button> : <a className="secondary buttonLink" href="/api/spotify/login">Connect Spotify First</a>}
+              <input className="urlInput" value={playlistUrl} onChange={(event) => setPlaylistUrl(event.target.value)} onKeyDown={(event) => event.key === "Enter" && importPlaylist()} placeholder="https://open.spotify.com/playlist/..." aria-label="Spotify playlist URL" disabled={loading} />
+              <button className="primary" onClick={importPlaylist} disabled={loading || !playlistUrl.trim()}>{loading ? "Loading Playlist…" : "Load Playlist"}</button>
             </div>
+            {spotifyConfigured && !spotifyConnected && <p className="hint">Using a private playlist instead? <a href="/api/spotify/login">Connect Spotify</a> as an optional fallback.</p>}
+            {spotifyConnected && <p className="hint">Spotify is connected, so the app can also try your owned or collaborative playlists when the public view is unavailable.</p>}
           </div>
+          <div className="successBadge">✓ No login required</div>
         </div>
         {error && <div className="error" role="alert">{error}</div>}
       </section>
 
       {playlist && (
         <section className="card playlist" id="review-section">
-          <div className="sectionKicker"><span>3</span> Review and create</div>
+          <div className="sectionKicker"><span>2</span> Review and create</div>
           <div className="playlistHead">
             {playlist.imageUrl ? <Image className="art" src={playlist.imageUrl} alt="" width={88} height={88} /> : <div className="art" />}
-            <div className="playlistMeta"><h2>{playlist.name}</h2><p>{playlist.tracks.length} songs · estimated finished mix around {estimatedMinutes} minutes</p></div>
+            <div className="playlistMeta">
+              <h2>{playlist.name}</h2>
+              <p>{playlist.tracks.length} songs · estimated finished mix around {estimatedMinutes} minutes</p>
+              {playlist.truncated && <p style={{ marginTop: 7, color: "#ffca80" }}>Spotify's public view returned the first 100 songs. Connect Spotify if this is your playlist and you need the full list.</p>}
+            </div>
           </div>
           <div className="mixSummary">
             <div><span>Song sections</span><strong>1:32–2:22 each</strong></div>
@@ -288,7 +285,7 @@ export default function RemixStudio() {
                 <div className="track" key={`${track.id}-${index}`}>
                   <div className="trackIndex">{index + 1}</div>
                   {track.imageUrl ? <Image className="trackArt" src={track.imageUrl} alt="" width={48} height={48} /> : <div className="trackArt" />}
-                  <div className="trackText"><div className="trackTitle">{track.name}</div><div className="trackArtist">{track.artists.join(", ")} · {track.album}</div></div>
+                  <div className="trackText"><div className="trackTitle">{track.name}</div><div className="trackArtist">{track.artists.join(", ")}{track.album ? ` · ${track.album}` : ""}</div></div>
                   <div className="duration">{formatDuration(track.durationMs)}</div>
                 </div>
               ))}
@@ -299,7 +296,7 @@ export default function RemixStudio() {
 
       {job && (
         <section className="card jobCard" id="status-section" aria-live="polite">
-          <div className="sectionKicker"><span>4</span> Mix status</div>
+          <div className="sectionKicker"><span>3</span> Mix status</div>
           <div className="jobHeader"><div><h2>{jobLabel(job.state)}</h2><p>{job.message}</p></div><div className={`statusDot ${job.state}`} aria-label={job.state} /></div>
           {RUNNING_STATES.includes(job.state) && (
             <div className="renderSteps">
@@ -344,7 +341,7 @@ export default function RemixStudio() {
         </section>
       )}
 
-      <p className="legal">Spotify is used for playlist metadata and attribution. The remix engine only processes audio from files or catalogs you are authorized to use.</p>
+      <p className="legal">Public Spotify playlist metadata is read from Spotify's public embed. Spotify audio is not downloaded; the remix engine only processes audio from files or catalogs you are authorized to use.</p>
     </main>
   );
 }
