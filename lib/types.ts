@@ -15,6 +15,8 @@ export type PlaylistPayload = {
   imageUrl: string | null;
   spotifyUrl: string;
   tracks: PlaylistTrack[];
+  source?: "public_embed" | "spotify_api";
+  truncated?: boolean;
 };
 
 export type RemixSettings = {
