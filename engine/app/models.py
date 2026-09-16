@@ -75,6 +75,7 @@ class ResolvedTrack(BaseModel):
     file_path: str
     source_filename: str = ""
     match_score: float = 0.0
+    image_url: str | None = None
     analysis: Analysis | None = None
 
 
@@ -95,6 +96,7 @@ class MixClip(BaseModel):
     use_instrumental_intro: bool = False
     section_label: str = ""
     transition_note: str = ""
+    image_url: str | None = None
 
 
 class MasteringReport(BaseModel):
