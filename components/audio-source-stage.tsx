@@ -144,6 +144,17 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
     }
   }
 
+  function chooseFolder() {
+    if (uploading) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus";
+    input.setAttribute("webkitdirectory", "");
+    input.addEventListener("change", () => void uploadFiles(input.files));
+    input.click();
+  }
+
   const missing = result?.missing ?? [];
   const matches = result?.matches ?? [];
 
@@ -152,7 +163,7 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
         <div>
           <strong style={{ display: "block", fontSize: 18, marginBottom: 4 }}>Audio sources</strong>
-          <span style={{ color: "#9ca296", lineHeight: 1.5 }}>Add the audio files you are authorized to remix. The engine matches them automatically by tags, title, artist, filename, and duration.</span>
+          <span style={{ color: "#9ca296", lineHeight: 1.5 }}>The personal engine scans your Windows Music folder automatically. You can also add individual files or a whole folder, and it matches them by tags, title, artist, filename, and duration.</span>
         </div>
         <div className="successBadge" style={{ opacity: result?.ready ? 1 : .75 }}>
           {checking ? "Checking…" : result ? `${result.matched}/${result.total} matched` : "Engine check"}
@@ -185,6 +196,7 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
             style={{ display: "none" }}
           />
         </label>
+        <button className="secondary" onClick={chooseFolder} disabled={uploading}>Add Folder</button>
         <button className="secondary" onClick={() => void checkSources()} disabled={checking || uploading}>Check Again</button>
         {!showEngineSetup && <button className="textButton" onClick={() => setShowEngineSetup(true)}>Engine Settings</button>}
         {result?.ready && <span style={{ color: "#b8f7cd", fontWeight: 700 }}>✓ Every included song has audio</span>}
@@ -197,7 +209,7 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
         <div style={{ marginTop: 16, border: "1px solid rgba(255,177,92,.35)", background: "rgba(255,177,92,.07)", borderRadius: 12, padding: 14 }}>
           <strong style={{ color: "#fff0de" }}>{missing.length} selected song{missing.length === 1 ? "" : "s"} still need audio</strong>
           <div style={{ color: "#ffd2a0", marginTop: 7, lineHeight: 1.55 }}>{missing.slice(0, 12).join(" • ")}{missing.length > 12 ? ` • +${missing.length - 12} more` : ""}</div>
-          <div style={{ color: "#9ca296", marginTop: 8, fontSize: 13 }}>Upload those files, or X those songs out of this mix above.</div>
+          <div style={{ color: "#9ca296", marginTop: 8, fontSize: 13 }}>Add the missing files or X those songs out of this mix above.</div>
         </div>
       )}
 
