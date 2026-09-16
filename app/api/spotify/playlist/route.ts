@@ -21,13 +21,18 @@ type SpotifyPlaylistItem = { item?: SpotifyTrack | null };
 
 async function spotifyFetch<T>(url: string, token: string): Promise<T> {
   const response = await fetch(url, {
-    headers: { authorization: `Bearer ${token}` },
+    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
     cache: "no-store",
   });
+  const text = await response.text();
   if (response.status === 401) throw new Error("AUTH");
   if (response.status === 403) throw new Error("FORBIDDEN");
   if (!response.ok) throw new Error(`Spotify returned ${response.status}.`);
-  return response.json() as Promise<T>;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Spotify returned unreadable API data (${response.status}).`);
+  }
 }
 
 async function fetchWithSpotifyApi(playlistId: string, playlistUrl: string, token: string): Promise<PlaylistPayload> {
@@ -40,9 +45,11 @@ async function fetchWithSpotifyApi(playlistId: string, playlistUrl: string, toke
   }>(`https://api.spotify.com/v1/playlists/${playlistId}`, token);
 
   const tracks: PlaylistTrack[] = [];
-  let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`;
+  let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50&offset=0`;
+  let pageCount = 0;
   while (nextUrl) {
-    const page: { items: SpotifyPlaylistItem[]; next: string | null } = await spotifyFetch(nextUrl, token);
+    if (++pageCount > 500) throw new Error("Spotify pagination exceeded a safe limit.");
+    const page = await spotifyFetch<{ items: SpotifyPlaylistItem[]; next: string | null }>(nextUrl, token);
     for (const row of page.items ?? []) {
       const item = row.item;
       if (!item || item.type !== "track") continue;
@@ -60,7 +67,6 @@ async function fetchWithSpotifyApi(playlistId: string, playlistUrl: string, toke
   }
 
   if (!tracks.length) throw new Error("FORBIDDEN");
-
   return {
     id: meta.id,
     name: meta.name,
@@ -73,60 +79,74 @@ async function fetchWithSpotifyApi(playlistId: string, playlistUrl: string, toke
   };
 }
 
+function bearerFrom(request: NextRequest) {
+  const header = request.headers.get("authorization") ?? "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => ({})) as { playlistUrl?: string };
+  let body: { playlistUrl?: string } = {};
+  try {
+    body = await request.json() as { playlistUrl?: string };
+  } catch {
+    return NextResponse.json({ error: "The playlist request was not valid JSON." }, { status: 400 });
+  }
+
   const playlistUrl = body.playlistUrl?.trim() ?? "";
   const playlistId = playlistUrl ? extractSpotifyPlaylistId(playlistUrl) : null;
   if (!playlistId) {
     return NextResponse.json({ error: "Paste a valid Spotify playlist link." }, { status: 400 });
   }
 
-  let publicPlaylist: PlaylistPayload | null = null;
-  let publicError: string | null = null;
-
-  try {
-    publicPlaylist = await fetchPublicSpotifyPlaylist(playlistId, playlistUrl);
-    if (!publicPlaylist.truncated) {
-      return NextResponse.json(publicPlaylist, { headers: { "cache-control": "no-store" } });
-    }
-  } catch (error) {
-    publicError = error instanceof Error ? error.message : "The public playlist could not be read.";
-  }
-
   const cookieStore = await cookies();
-  const token = cookieStore.get("spr_access_token")?.value;
+  const token = bearerFrom(request) ?? cookieStore.get("spr_access_token")?.value ?? null;
+  let apiFailure: "AUTH" | "FORBIDDEN" | null = null;
 
   if (token) {
     try {
-      const apiPlaylist = await fetchWithSpotifyApi(playlistId, playlistUrl, token);
-      return NextResponse.json(apiPlaylist, { headers: { "cache-control": "no-store" } });
+      const fullPlaylist = await fetchWithSpotifyApi(playlistId, playlistUrl, token);
+      return NextResponse.json(fullPlaylist, { headers: { "cache-control": "no-store" } });
     } catch (error) {
-      if (publicPlaylist) {
-        return NextResponse.json(publicPlaylist, { headers: { "cache-control": "no-store" } });
-      }
-      if (error instanceof Error && error.message === "AUTH") {
-        return NextResponse.json({ error: "Your optional Spotify connection expired. Public playlists still work without signing in." }, { status: 401 });
+      if (error instanceof Error && error.message === "AUTH") apiFailure = "AUTH";
+      else if (error instanceof Error && error.message === "FORBIDDEN") apiFailure = "FORBIDDEN";
+      else {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : "Spotify API request failed." },
+          { status: 502 },
+        );
       }
     }
   }
 
-  if (publicPlaylist) {
-    return NextResponse.json(publicPlaylist, { headers: { "cache-control": "no-store" } });
+  try {
+    const publicPlaylist = await fetchPublicSpotifyPlaylist(playlistId, playlistUrl);
+    return NextResponse.json(publicPlaylist, {
+      headers: { "cache-control": "no-store" },
+    });
+  } catch (error) {
+    if (apiFailure === "AUTH") {
+      return NextResponse.json(
+        { error: "Spotify sign-in expired. Reconnect Spotify and load the playlist again.", code: "AUTH_EXPIRED" },
+        { status: 401 },
+      );
+    }
+    if (apiFailure === "FORBIDDEN") {
+      return NextResponse.json(
+        {
+          error: "Spotify did not allow full access to this playlist from the connected account. Sign in with the account that owns or collaborates on this playlist.",
+          code: "PLAYLIST_NOT_OWNED",
+        },
+        { status: 403 },
+      );
+    }
+    return NextResponse.json(
+      {
+        error: "Spotify's public preview could not be reached from the site. Connect Spotify to load the playlist through Spotify's official API.",
+        code: "PUBLIC_IMPORT_FAILED",
+        detail: error instanceof Error ? error.message : "Public Spotify import failed.",
+      },
+      { status: 502 },
+    );
   }
-
-  const oauthConfigured = Boolean(
-    process.env.SPOTIFY_CLIENT_ID &&
-    process.env.SPOTIFY_CLIENT_SECRET &&
-    process.env.SPOTIFY_REDIRECT_URI,
-  );
-
-  return NextResponse.json(
-    {
-      error: oauthConfigured
-        ? "That playlist could not be read publicly. If it is private, use the optional Connect Spotify button and try again."
-        : "That playlist could not be read as a public Spotify playlist. Make sure the playlist is public and paste its normal Spotify share link.",
-      detail: publicError,
-    },
-    { status: 422 },
-  );
 }
