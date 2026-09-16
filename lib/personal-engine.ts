@@ -8,8 +8,13 @@ export function getPersonalEngineUrl(): string {
 export function savePersonalEngineUrl(value: string): string {
   if (typeof window === "undefined") return "";
   const clean = value.trim().replace(/\/$/, "");
-  if (clean) window.localStorage.setItem(ENGINE_URL_KEY, clean);
-  else window.localStorage.removeItem(ENGINE_URL_KEY);
+  if (clean) {
+    window.localStorage.setItem(ENGINE_URL_KEY, clean);
+    document.cookie = `spr_personal_engine_url=${encodeURIComponent(clean)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
+  } else {
+    window.localStorage.removeItem(ENGINE_URL_KEY);
+    document.cookie = "spr_personal_engine_url=; Path=/; Max-Age=0; SameSite=Lax; Secure";
+  }
   return clean;
 }
 
