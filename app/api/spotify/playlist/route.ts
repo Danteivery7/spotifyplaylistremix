@@ -8,16 +8,21 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type SpotifyImage = { url: string };
+type SpotifyArtist = { name: string };
 type SpotifyTrack = {
   id: string;
   name: string;
   duration_ms: number;
   external_urls?: { spotify?: string };
-  artists?: Array<{ name: string }>;
+  artists?: SpotifyArtist[];
   album?: { name?: string; images?: SpotifyImage[] };
   type?: string;
 };
 type SpotifyPlaylistItem = { item?: SpotifyTrack | null };
+type SpotifyPlaylistPage = {
+  items: SpotifyPlaylistItem[];
+  next: string | null;
+};
 
 async function spotifyFetch<T>(url: string, token: string): Promise<T> {
   const response = await fetch(url, {
@@ -49,14 +54,14 @@ async function fetchWithSpotifyApi(playlistId: string, playlistUrl: string, toke
   let pageCount = 0;
   while (nextUrl) {
     if (++pageCount > 500) throw new Error("Spotify pagination exceeded a safe limit.");
-    const page = await spotifyFetch<{ items: SpotifyPlaylistItem[]; next: string | null }>(nextUrl, token);
+    const page: SpotifyPlaylistPage = await spotifyFetch<SpotifyPlaylistPage>(nextUrl, token);
     for (const row of page.items ?? []) {
       const item = row.item;
       if (!item || item.type !== "track") continue;
       tracks.push({
         id: item.id,
         name: item.name,
-        artists: item.artists?.map((artist) => artist.name) ?? [],
+        artists: item.artists?.map((artist: SpotifyArtist) => artist.name) ?? [],
         album: item.album?.name ?? "",
         durationMs: item.duration_ms,
         imageUrl: item.album?.images?.[0]?.url ?? null,
