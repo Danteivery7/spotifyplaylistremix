@@ -1,26 +1,27 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .analyzer import analyze_tracks
-from .library import resolve_playlist
+from .library import AUDIO_EXTENSIONS, media_root, resolve_playlist, scan_library
 from .mastering import master_audio
-from .models import CreateJobRequest, JobState, JobStatus, RemixSettings
+from .models import CreateJobRequest, JobState, JobStatus, PlaylistIn, RemixSettings
 from .planner import plan_mix
 from .renderer import render_mix, render_transition_preview, render_video
 from .separator import stems_enabled
 
-app = FastAPI(title="Playlist Remix Engine", version="0.2.0")
+app = FastAPI(title="Playlist Remix Engine", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[origin.strip() for origin in os.getenv("WEB_ORIGINS", "http://localhost:3000").split(",") if origin.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -33,6 +34,14 @@ def _output_root() -> Path:
     root = Path(os.getenv("OUTPUT_PATH", "./output")).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _safe_upload_name(filename: str) -> tuple[str, str]:
+    original = Path(filename).name
+    extension = Path(original).suffix.lower()
+    stem = Path(original).stem
+    safe_stem = re.sub(r"[^A-Za-z0-9._ -]+", "_", stem).strip(" ._")[:120] or "audio"
+    return safe_stem, extension
 
 
 def update(job_id: str, **changes) -> None:
@@ -48,7 +57,7 @@ def process_job(job_id: str, request: CreateJobRequest) -> None:
             update(
                 job_id,
                 state=JobState.blocked,
-                message="Some playlist tracks are not present in the authorized media library.",
+                message="Some selected tracks still need audio. Add files in the Audio Sources stage, or exclude those songs.",
                 missing_tracks=missing,
             )
             return
@@ -114,8 +123,88 @@ def process_job(job_id: str, request: CreateJobRequest) -> None:
 
 
 @app.get("/health")
-def health() -> dict[str, str | bool]:
-    return {"status": "ok", "version": "0.2.0", "stems_enabled": stems_enabled()}
+def health() -> dict[str, str | bool | int]:
+    return {
+        "status": "ok",
+        "version": "0.3.0",
+        "stems_enabled": stems_enabled(),
+        "audio_files": len(scan_library()),
+    }
+
+
+@app.get("/media/status")
+def media_status() -> dict[str, int | str]:
+    root = media_root()
+    return {
+        "files": len(scan_library(root)),
+        "max_upload_mb": int(os.getenv("MAX_AUDIO_UPLOAD_MB", "96")),
+        "library": str(root),
+    }
+
+
+@app.post("/media/upload")
+async def upload_media(file: UploadFile = File(...)) -> dict[str, int | str]:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="An audio filename is required.")
+
+    safe_stem, extension = _safe_upload_name(file.filename)
+    if extension not in AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Use MP3, WAV, FLAC, M4A, AAC, OGG, or OPUS audio files.")
+
+    upload_root = media_root() / "uploads"
+    upload_root.mkdir(parents=True, exist_ok=True)
+    target = upload_root / f"{safe_stem}{extension}"
+    if target.exists():
+        target = upload_root / f"{safe_stem}-{uuid.uuid4().hex[:8]}{extension}"
+    temp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
+
+    max_bytes = int(os.getenv("MAX_AUDIO_UPLOAD_MB", "96")) * 1024 * 1024
+    size = 0
+    try:
+        with temp.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Audio files must be under {max_bytes // (1024 * 1024)} MB each.")
+                handle.write(chunk)
+        temp.replace(target)
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    return {
+        "filename": target.name,
+        "bytes": size,
+        "library_files": len(scan_library()),
+    }
+
+
+@app.post("/media/resolve")
+def resolve_media(playlist: PlaylistIn) -> dict:
+    if not playlist.tracks:
+        raise HTTPException(status_code=400, detail="Playlist contains no tracks.")
+    resolved, missing = resolve_playlist(playlist)
+    return {
+        "ready": not missing and len(resolved) == len(playlist.tracks),
+        "total": len(playlist.tracks),
+        "matched": len(resolved),
+        "missing": missing,
+        "matches": [
+            {
+                "spotify_id": track.spotify_id,
+                "title": track.title,
+                "artists": track.artists,
+                "filename": track.source_filename or Path(track.file_path).name,
+                "score": track.match_score,
+            }
+            for track in resolved
+        ],
+    }
 
 
 @app.post("/jobs", response_model=JobStatus, status_code=202)
