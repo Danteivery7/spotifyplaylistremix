@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { PlaylistPayload } from "@/lib/types";
+import {
+  getPersonalEngineUrl,
+  personalEngineEndpoint,
+  savePersonalEngineUrl,
+} from "@/lib/personal-engine";
 
 type MatchRow = {
   spotify_id: string;
@@ -41,22 +46,31 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [engineUrl, setEngineUrl] = useState("");
+  const [showEngineSetup, setShowEngineSetup] = useState(false);
 
   const fingerprint = useMemo(
     () => `${playlist.id}:${playlist.tracks.map((track) => track.id).join("|")}`,
     [playlist],
   );
 
+  useEffect(() => {
+    setEngineUrl(getPersonalEngineUrl());
+  }, []);
+
   async function checkSources() {
     setChecking(true);
     setError(null);
     try {
-      const response = await fetch("/api/remix/media/resolve", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(playlist),
-        cache: "no-store",
-      });
+      const response = await fetch(
+        personalEngineEndpoint("/media/resolve", "/api/remix/media/resolve"),
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(playlist),
+          cache: "no-store",
+        },
+      );
       const body = await readJson(response);
       if (!response.ok) {
         throw new Error(String(body.error ?? body.detail ?? "Could not check the audio library."));
@@ -64,9 +78,11 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
       const next = body as unknown as ResolveResult;
       setResult(next);
       onReadyChange?.(next.ready);
+      setShowEngineSetup(false);
     } catch (err) {
       setResult(null);
       onReadyChange?.(false);
+      setShowEngineSetup(true);
       setError(err instanceof Error ? err.message : "Could not check the audio library.");
     } finally {
       setChecking(false);
@@ -81,6 +97,13 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
     // The fingerprint intentionally represents the selected mix, including exclusions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fingerprint]);
+
+  function saveEngine() {
+    const saved = savePersonalEngineUrl(engineUrl);
+    setEngineUrl(saved);
+    setProgress(saved ? "Personal engine URL saved. Checking connection…" : "Using the Cloudflare-configured engine.");
+    void checkSources();
+  }
 
   async function uploadFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -101,10 +124,10 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
         setProgress(`Uploading ${index + 1}/${selected.length} · ${file.name}`);
         const data = new FormData();
         data.append("file", file, file.name);
-        const response = await fetch("/api/remix/media/upload", {
-          method: "POST",
-          body: data,
-        });
+        const response = await fetch(
+          personalEngineEndpoint("/media/upload", "/api/remix/media/upload"),
+          { method: "POST", body: data },
+        );
         const body = await readJson(response);
         if (!response.ok) {
           throw new Error(`${file.name}: ${String(body.error ?? body.detail ?? "upload failed")}`);
@@ -114,6 +137,7 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
       await checkSources();
       setProgress("Audio library updated.");
     } catch (err) {
+      setShowEngineSetup(true);
       setError(err instanceof Error ? err.message : "Audio upload failed.");
     } finally {
       setUploading(false);
@@ -135,6 +159,17 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
         </div>
       </div>
 
+      {(showEngineSetup || engineUrl) && (
+        <div style={{ marginTop: 16, border: "1px solid #30362e", borderRadius: 12, padding: 14, background: "#090b09" }}>
+          <strong style={{ display: "block", marginBottom: 5 }}>Personal remix engine</strong>
+          <div style={{ color: "#9ca296", fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>If the Cloudflare-hosted site cannot reach the engine, run the personal engine on your PC and paste its HTTPS Cloudflare Tunnel URL here. This stays only in this browser.</div>
+          <div className="inputRow">
+            <input className="urlInput" value={engineUrl} onChange={(event) => setEngineUrl(event.target.value)} placeholder="https://your-engine.trycloudflare.com" aria-label="Personal remix engine URL" />
+            <button className="secondary" onClick={saveEngine}>Save Engine</button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
         <label className="primary" style={{ display: "inline-flex", alignItems: "center", cursor: uploading ? "default" : "pointer" }}>
           {uploading ? "Uploading…" : "Add Audio Files"}
@@ -151,6 +186,7 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
           />
         </label>
         <button className="secondary" onClick={() => void checkSources()} disabled={checking || uploading}>Check Again</button>
+        {!showEngineSetup && <button className="textButton" onClick={() => setShowEngineSetup(true)}>Engine Settings</button>}
         {result?.ready && <span style={{ color: "#b8f7cd", fontWeight: 700 }}>✓ Every included song has audio</span>}
       </div>
 
@@ -160,9 +196,7 @@ export default function AudioSourceStage({ playlist, onReadyChange }: Props) {
       {missing.length > 0 && (
         <div style={{ marginTop: 16, border: "1px solid rgba(255,177,92,.35)", background: "rgba(255,177,92,.07)", borderRadius: 12, padding: 14 }}>
           <strong style={{ color: "#fff0de" }}>{missing.length} selected song{missing.length === 1 ? "" : "s"} still need audio</strong>
-          <div style={{ color: "#ffd2a0", marginTop: 7, lineHeight: 1.55 }}>
-            {missing.slice(0, 12).join(" • ")}{missing.length > 12 ? ` • +${missing.length - 12} more` : ""}
-          </div>
+          <div style={{ color: "#ffd2a0", marginTop: 7, lineHeight: 1.55 }}>{missing.slice(0, 12).join(" • ")}{missing.length > 12 ? ` • +${missing.length - 12} more` : ""}</div>
           <div style={{ color: "#9ca296", marginTop: 8, fontSize: 13 }}>Upload those files, or X those songs out of this mix above.</div>
         </div>
       )}
