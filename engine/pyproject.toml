@@ -1,6 +1,6 @@
 [project]
 name = "playlist-remix-engine"
-version = "0.2.0"
+version = "0.3.0"
 description = "Long-form intelligent playlist remix engine"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,7 +10,8 @@ dependencies = [
   "numpy>=2.0,<3",
   "soundfile>=0.13,<1",
   "pydantic>=2.11,<3",
-  "python-multipart>=0.0.20,<1"
+  "python-multipart>=0.0.20,<1",
+  "mutagen>=1.47,<2"
 ]
 
 [project.optional-dependencies]
