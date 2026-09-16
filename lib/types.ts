@@ -6,6 +6,7 @@ export type PlaylistTrack = {
   durationMs: number;
   imageUrl: string | null;
   spotifyUrl: string;
+  explicit?: boolean;
 };
 
 export type PlaylistPayload = {

@@ -13,6 +13,7 @@ type SpotifyTrack = {
   id: string;
   name: string;
   duration_ms: number;
+  explicit?: boolean;
   external_urls?: { spotify?: string };
   artists?: SpotifyArtist[];
   album?: { name?: string; images?: SpotifyImage[] };
@@ -66,6 +67,7 @@ async function fetchWithSpotifyApi(playlistId: string, playlistUrl: string, toke
         durationMs: item.duration_ms,
         imageUrl: item.album?.images?.[0]?.url ?? null,
         spotifyUrl: item.external_urls?.spotify ?? `https://open.spotify.com/track/${item.id}`,
+        explicit: item.explicit ?? false,
       });
     }
     nextUrl = page.next;
