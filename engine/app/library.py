@@ -3,12 +3,30 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
-from pathlib import Path
+from dataclasses import dataclass
 from difflib import SequenceMatcher
+from pathlib import Path
 
-from .models import PlaylistIn, ResolvedTrack
+from mutagen import File as MutagenFile
+
+from .models import PlaylistIn, ResolvedTrack, TrackIn
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus"}
+VERSION_WORDS = {"live", "remix", "mix", "clean", "radio", "edit", "acoustic", "instrumental", "karaoke", "sped", "slowed"}
+
+
+@dataclass(frozen=True)
+class AudioCandidate:
+    path: Path
+    title: str = ""
+    artists: tuple[str, ...] = ()
+    duration_seconds: float = 0.0
+
+
+def media_root() -> Path:
+    root = Path(os.getenv("MEDIA_LIBRARY_PATH", "./media")).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def normalize(value: str) -> str:
@@ -19,35 +37,115 @@ def normalize(value: str) -> str:
     return " ".join(value.split())
 
 
-def score_file(track_name: str, artists: list[str], path: Path) -> float:
-    stem = normalize(path.stem)
-    title = normalize(track_name)
-    artist = normalize(artists[0] if artists else "")
-    title_score = SequenceMatcher(None, title, stem).ratio()
-    artist_bonus = 0.12 if artist and artist in stem else 0.0
-    exact_bonus = 0.18 if title and title in stem else 0.0
-    return min(1.0, title_score + artist_bonus + exact_bonus)
-
-
-def scan_library(root: Path) -> list[Path]:
-    if not root.exists():
+def _tag_values(tags, key: str) -> list[str]:
+    if not tags:
         return []
-    return [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
+    try:
+        raw = tags.get(key, [])
+    except Exception:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    return [str(value) for value in raw if value]
 
 
-def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.60) -> tuple[list[ResolvedTrack], list[str]]:
-    root = Path(os.getenv("MEDIA_LIBRARY_PATH", "./media")).resolve()
-    files = scan_library(root)
-    available = set(files)
+def inspect_audio(path: Path) -> AudioCandidate:
+    title = ""
+    artists: tuple[str, ...] = ()
+    duration = 0.0
+    try:
+        audio = MutagenFile(str(path), easy=True)
+        if audio is not None:
+            title_values = _tag_values(audio.tags, "title")
+            artist_values = _tag_values(audio.tags, "artist") or _tag_values(audio.tags, "albumartist")
+            title = title_values[0] if title_values else ""
+            artists = tuple(artist_values)
+            duration = float(getattr(getattr(audio, "info", None), "length", 0.0) or 0.0)
+    except Exception:
+        pass
+    return AudioCandidate(path=path, title=title, artists=artists, duration_seconds=duration)
+
+
+def scan_library(root: Path | None = None) -> list[AudioCandidate]:
+    base = root or media_root()
+    if not base.exists():
+        return []
+    return [inspect_audio(path) for path in base.rglob("*") if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS]
+
+
+def _version_penalty(track: TrackIn, candidate_text: str) -> float:
+    track_text = normalize(f"{track.name} {track.album}")
+    penalty = 0.0
+    for word in VERSION_WORDS:
+        if word in candidate_text and word not in track_text:
+            penalty += 0.055
+    if track.explicit and ("clean" in candidate_text or "radio edit" in candidate_text):
+        penalty += 0.18
+    return min(0.28, penalty)
+
+
+def score_file(track: TrackIn, candidate: AudioCandidate) -> float:
+    expected_title = normalize(track.name)
+    expected_artists = [normalize(artist) for artist in track.artists if artist]
+    stem = normalize(candidate.path.stem)
+    tagged_title = normalize(candidate.title)
+    tagged_artists = [normalize(artist) for artist in candidate.artists if artist]
+    candidate_text = " ".join(part for part in [stem, tagged_title, *tagged_artists] if part)
+
+    title_score = 0.0
+    if expected_title:
+        title_score = max(
+            SequenceMatcher(None, expected_title, tagged_title).ratio() if tagged_title else 0.0,
+            SequenceMatcher(None, expected_title, stem).ratio(),
+            0.96 if expected_title in candidate_text else 0.0,
+        )
+
+    artist_score = 0.0
+    if expected_artists:
+        for expected in expected_artists:
+            artist_score = max(
+                artist_score,
+                max((SequenceMatcher(None, expected, actual).ratio() for actual in tagged_artists), default=0.0),
+                0.95 if expected and expected in candidate_text else 0.0,
+            )
+    else:
+        artist_score = 0.7
+
+    duration_score = 0.72
+    if candidate.duration_seconds > 0 and track.durationMs > 0:
+        delta = abs(candidate.duration_seconds - (track.durationMs / 1000.0))
+        duration_score = max(0.0, 1.0 - delta / 24.0)
+
+    exact_bonus = 0.055 if expected_title and expected_title in candidate_text else 0.0
+    score = (0.62 * title_score) + (0.20 * artist_score) + (0.18 * duration_score) + exact_bonus
+    score -= _version_penalty(track, candidate_text)
+    return max(0.0, min(1.0, score))
+
+
+def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.62) -> tuple[list[ResolvedTrack], list[str]]:
+    available = set(scan_library())
     resolved: list[ResolvedTrack] = []
     missing: list[str] = []
 
     for track in playlist.tracks:
-        ranked = sorted(((score_file(track.name, track.artists, path), path) for path in available), reverse=True, key=lambda row: row[0])
+        ranked = sorted(
+            ((score_file(track, candidate), candidate) for candidate in available),
+            reverse=True,
+            key=lambda row: row[0],
+        )
         if not ranked or ranked[0][0] < threshold:
             missing.append(f"{track.artists[0] if track.artists else 'Unknown'} — {track.name}")
             continue
-        _, best = ranked[0]
+        score, best = ranked[0]
         available.remove(best)
-        resolved.append(ResolvedTrack(spotify_id=track.id, title=track.name, artists=track.artists, file_path=str(best)))
+        resolved.append(
+            ResolvedTrack(
+                spotify_id=track.id,
+                title=track.name,
+                artists=track.artists,
+                file_path=str(best.path),
+                source_filename=best.path.name,
+                match_score=score,
+            )
+        )
     return resolved, missing
