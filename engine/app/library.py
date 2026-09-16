@@ -170,6 +170,7 @@ def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.62) -> tuple[lis
                 file_path=str(best.path),
                 source_filename=best.path.name,
                 match_score=score,
+                image_url=track.imageUrl,
             )
         )
     return resolved, missing
