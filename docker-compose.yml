@@ -1,13 +1,21 @@
 services:
   audio-engine:
-    build: ./engine
+    build:
+      context: ./engine
+      args:
+        INSTALL_STEMS: ${INSTALL_STEMS:-false}
     environment:
       MEDIA_LIBRARY_PATH: /media
       OUTPUT_PATH: /output
       ENABLE_STEMS: ${ENABLE_STEMS:-false}
       STEM_MODEL: ${STEM_MODEL:-model_bs_roformer_ep_317_sdr_12.9755.ckpt}
+      STEM_EXTRA_MODELS: ${STEM_EXTRA_MODELS:-}
+      STEM_CACHE_PATH: /stem-cache
+      STEM_AUTOCAST: ${STEM_AUTOCAST:-true}
+      STEM_TORCH_COMPILE: ${STEM_TORCH_COMPILE:-false}
     volumes:
       - ./media:/media:ro
       - ./engine/output:/output
+      - ./engine/stem-cache:/stem-cache
     ports:
       - "8000:8000"
