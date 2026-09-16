@@ -1,0 +1,10 @@
+services:
+  audio-engine:
+    build:
+      args:
+        INSTALL_STEMS: "true"
+    environment:
+      ENABLE_STEMS: "true"
+      STEM_AUTOCAST: "true"
+      STEM_TORCH_COMPILE: ${STEM_TORCH_COMPILE:-false}
+    gpus: all

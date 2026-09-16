@@ -1,32 +1,57 @@
 # Playlist Remix Studio
 
-A modern Rave.dj-style long-form remix system: paste a Spotify playlist, analyze the songs from an **authorized local audio library**, intelligently select substantial portions of each track, plan compatible transitions, and render one long mix plus an optional 16:9 video.
+A long-form automatic remix system inspired by the simplicity of Rave.dj but built around a newer analysis, transition, stem-separation and mastering pipeline.
 
-## What is implemented
+Paste a Spotify playlist, resolve the songs from an **authorized audio library**, analyze the music, keep substantial sections of each track, create musically planned transitions, master the full mix, and export audio plus a 16:9 video.
 
-- Clean one-link Next.js 16 interface.
-- Spotify OAuth and the **2026** playlist `/items` API shape.
-- Playlist import for playlists the connected user owns or collaborates on.
-- Automatic matching of playlist tracks against an authorized local media library.
-- Real audio analysis with librosa 1.0: BPM, key, RMS energy, onset strength and duration.
-- Smart ordering based on tempo/key/energy compatibility.
-- Rave-style song windows: defaults to roughly **1:32–2:22 per track** rather than full songs or tiny clips.
-- Adaptive 6–18 second transitions.
-- FFmpeg long-form audio rendering at 320 kbps AAC.
-- Optional 1920×1080 H.264 video rendering.
-- Optional BS-RoFormer stem-separation adapter using `audio-separator` for a later stem-aware transition renderer.
+## Current quality pipeline
+
+The current engine now includes:
+
+- Spotify OAuth and the current playlist `/items` API shape.
+- Automatic local-library matching for authorized audio.
+- Beat, bar and tempo analysis with librosa.
+- Musical-key estimation plus key-confidence scoring.
+- Phrase and structural-section detection.
+- Automatic section labels such as intro, verse, build, chorus/drop, breakdown and outro.
+- Phrase-aligned song windows that still preserve roughly **1:32–2:22 per song**.
+- Camelot-style harmonic compatibility scoring.
+- Tempo, key, energy and rhythmic-stability transition scoring.
+- Beam-search playlist ordering instead of one-step greedy ordering.
+- Subtle automatic tempo matching, capped to small changes.
+- Per-track level matching before transitions.
+- Adaptive transition types, including longer harmonic blends and short clean handoffs.
+- Optional BS-RoFormer / MelBand-RoFormer-compatible stem separation through `audio-separator`.
+- Vocal-safe stem transitions that bring the incoming instrumental in before its full vocal mix.
+- Stem caching so the same song is not separated repeatedly.
+- Optional stem-model ensembling through `STEM_EXTRA_MODELS`.
+- Equal-power FFmpeg transitions.
+- Two-pass **EBU R128** mastering.
+- Default final target of **-14 LUFS** with a **-1 dBTP** true-peak ceiling.
+- 320 kbps AAC long-form output.
+- 1920×1080 H.264 video with a live waveform.
+- On-demand mastered previews for every planned transition.
+- A final quality panel showing mastering targets and measured output loudness.
+- CI planner tests plus a real synthesized FFmpeg render/master smoke test.
 
 ## Important source rule
 
-Spotify is used for playlist metadata and attribution. This project **does not download or stream-rip Spotify audio**. Put audio you own or are licensed to process in `./media`; the engine matches those files to the playlist automatically. This keeps the architecture reliable and aligned with Spotify's platform rules.
+Spotify is used for playlist metadata and attribution. This project **does not download or stream-rip Spotify audio**.
 
-Spotify's current development-mode API only exposes playlist contents for playlists owned by the connected user or playlists where that user is a collaborator. The Spotify app owner must also satisfy Spotify's current development-mode account requirements.
+Put audio you own or are licensed to process in `./media`. Helpful file names look like:
+
+```text
+Artist - Song Title.flac
+Artist - Song Title.mp3
+```
+
+The engine matches those files to the Spotify playlist.
 
 ## Local setup
 
 ### 1. Spotify app
 
-Create a Spotify developer app and set this redirect URI:
+Create a Spotify developer app and set:
 
 ```text
 http://localhost:3000/api/spotify/callback
@@ -49,51 +74,53 @@ npm install
 npm run dev
 ```
 
-### 3. Audio engine
-
-Put authorized song files in `./media`. Helpful file names are like:
-
-```text
-Artist - Song Title.flac
-Artist - Song Title.mp3
-```
-
-Then run:
+### 3. Audio engine: standard mode
 
 ```bash
 docker compose up --build
 ```
 
-Or directly:
+This runs the complete phrase-aware renderer and mastering pipeline without GPU stem separation. Stem-marked transitions automatically fall back to the full mix if stems are unavailable.
+
+### 4. Audio engine: highest-quality GPU stem mode
+
+For an NVIDIA Docker setup with GPU access:
 
 ```bash
-cd engine
-python -m venv .venv
-# activate the environment
-pip install -e .
-uvicorn app.main:app --reload --port 8000
+INSTALL_STEMS=true ENABLE_STEMS=true \
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ```
 
-### 4. Use it
+The first stem transition may take longer because `audio-separator` downloads the configured model. Results are cached under `engine/stem-cache`.
+
+Default model:
+
+```text
+model_bs_roformer_ep_317_sdr_12.9755.ckpt
+```
+
+You can override it:
+
+```bash
+STEM_MODEL=melband_roformer_big_beta4.ckpt
+```
+
+If the machine has enough VRAM, optional model ensembling is wired in:
+
+```bash
+STEM_EXTRA_MODELS=modelA.ckpt,modelB.ckpt
+```
+
+### 5. Use it
 
 1. Open `http://localhost:3000`.
-2. Connect Spotify.
-3. Paste a playlist you own/collaborate on.
-4. Click **Create remix**.
-5. Click **Start engine** once the playlist preview is loaded.
-6. The engine resolves files from `./media`, analyzes them, plans the mix, and writes output under `engine/output`.
-
-## Stem separation
-
-The repository includes a feature-flagged BS-RoFormer integration point. For GPU-heavy stem work:
-
-```bash
-cd engine
-pip install -e '.[stems]'
-ENABLE_STEMS=true
-```
-
-The current renderer intentionally uses robust whole-track crossfades. The next audio milestone is to feed the separated vocal/instrumental stems into the transition renderer so compatible transitions can use vocal handoffs, instrumental swaps, and drum-led blends instead of forcing every transition through the same effect.
+2. Click **Connect Spotify**.
+3. Paste a playlist and click **Load Playlist**.
+4. Confirm the tracks.
+5. Click **Create My Mix**.
+6. Watch the stages: Finding audio → Mapping phrases → Planning transitions → Rendering transitions → Mastering.
+7. Download the mastered audio or video.
+8. Use **Hear a transition preview** to audition any transition from the finished plan.
 
 ## Architecture
 
@@ -108,24 +135,55 @@ Playlist payload
         │
         ▼
 FastAPI audio engine
-  ├─ local-library resolver
-  ├─ librosa analysis
-  ├─ compatibility planner
-  ├─ optional BS-RoFormer stems
-  └─ FFmpeg renderer
+  ├─ authorized-library resolver
+  ├─ beat / bar / key analysis
+  ├─ phrase + section segmentation
+  ├─ Camelot + tempo + energy scoring
+  ├─ beam-search set planner
+  ├─ optional RoFormer stem cache
+  ├─ vocal-safe transition renderer
+  ├─ FFmpeg lossless working mix
+  ├─ two-pass EBU R128 mastering
+  └─ transition-preview renderer
         │
-        ├─ .m4a long-form mix
-        └─ .mp4 1920×1080 video
+        ├─ .m4a mastered mix
+        └─ .mp4 1920×1080 waveform video
 ```
 
-## Roadmap
+## Quality defaults
 
-The foundation is deliberately structured so the next upgrades do not require rewriting the product:
+The automatic defaults are intentionally conservative:
 
-- stem-aware transition rendering
-- section/chorus detection and phrase-aligned edit points
-- job persistence + progress streaming
-- direct uploads/object storage instead of only a local media folder
-- visualizer + current-track titles in the rendered video
-- loudness normalization and mastering pass
-- optional manual transition review without making manual DJ work mandatory
+- Song window: 92–142 seconds
+- Base transition: ~12 seconds
+- Long harmonic/stem blend: up to ~20 seconds
+- Automatic tempo stretch: only when within ±4%
+- Per-track gain correction: capped to ±5 dB
+- Master target: -14 LUFS
+- True-peak ceiling: -1 dBTP
+- Preview length: ~28 seconds
+
+The goal is not to force a flashy mashup on every pair. When two tracks are not musically compatible, the planner deliberately chooses a shorter, cleaner handoff.
+
+## Tests
+
+```bash
+cd engine
+pip install -e '.[dev]'
+pytest -q
+```
+
+The tests cover harmonic compatibility, phrase-snapped windows, stem-transition planning, bounded gain matching, and a real FFmpeg render/master smoke test.
+
+## Remaining product work
+
+The core audio-intelligence layer is now implemented. The remaining work is mostly product and production infrastructure rather than fundamental mixing logic:
+
+- persistent job storage instead of in-memory jobs
+- upload/object-storage workflow for authorized audio
+- cancellation and resumable renders
+- GPU worker queue for large playlists
+- richer current-track/video graphics
+- optional manual transition override while preserving one-click automatic mode
+
+No automatic DJ system can guarantee a subjectively perfect transition for every possible pair of songs. The engine is designed to avoid forcing bad combinations and to choose safer handoffs when the musical evidence is weak.
