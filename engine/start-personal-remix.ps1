@@ -63,6 +63,7 @@ if (-not (Test-Path $Python)) {
 Write-Host "Installing/updating remix engine dependencies..." -ForegroundColor Yellow
 & $Python -m pip install --disable-pip-version-check --upgrade pip
 if ($EnableStems) {
+  Write-Host "High-quality stem transition mode enabled." -ForegroundColor Green
   & $Python -m pip install -e ".[stems]"
 } else {
   & $Python -m pip install -e "."
@@ -70,8 +71,10 @@ if ($EnableStems) {
 
 $MediaPath = Join-Path $EngineRoot "media"
 $OutputPath = Join-Path $EngineRoot "output"
+$StemCachePath = Join-Path $EngineRoot "stem-cache"
 New-Item -ItemType Directory -Force -Path $MediaPath | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
+if ($EnableStems) { New-Item -ItemType Directory -Force -Path $StemCachePath | Out-Null }
 
 if (-not $LibraryPath) {
   $LibraryPath = [Environment]::GetFolderPath("MyMusic")
@@ -83,10 +86,13 @@ if ($LibraryPath -and (Test-Path $LibraryPath)) {
   Write-Host "No Windows Music folder found. Browser uploads will still work." -ForegroundColor Yellow
 }
 
+$EnableStemsValue = if ($EnableStems) { "true" } else { "false" }
 $EngineScript = @"
 `$env:MEDIA_LIBRARY_PATH='$MediaPath'
 `$env:EXTRA_MEDIA_PATHS='$LibraryPath'
 `$env:OUTPUT_PATH='$OutputPath'
+`$env:ENABLE_STEMS='$EnableStemsValue'
+`$env:STEM_CACHE_PATH='$StemCachePath'
 `$env:WEB_ORIGINS='*'
 `$env:MAX_AUDIO_UPLOAD_MB='96'
 Set-Location '$EngineRoot'
@@ -100,7 +106,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-EncodedCommand", $Encoded
 Start-Sleep -Seconds 3
 try {
   $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 10
-  Write-Host "Engine online: version $($health.version) - $($health.audio_files) audio files visible" -ForegroundColor Green
+  Write-Host "Engine online: version $($health.version) - $($health.audio_files) audio files visible - stems: $($health.stems_enabled)" -ForegroundColor Green
 } catch {
   Write-Host "The engine window opened, but the health check is not ready yet." -ForegroundColor Yellow
 }
