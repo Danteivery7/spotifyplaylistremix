@@ -29,6 +29,19 @@ def media_root() -> Path:
     return root
 
 
+def media_roots() -> list[Path]:
+    roots = [media_root()]
+    raw_extra = os.getenv("EXTRA_MEDIA_PATHS", "")
+    for raw in raw_extra.split(os.pathsep):
+        raw = raw.strip()
+        if not raw:
+            continue
+        path = Path(raw).expanduser().resolve()
+        if path.exists() and path not in roots:
+            roots.append(path)
+    return roots
+
+
 def normalize(value: str) -> str:
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = value.lower()
@@ -67,10 +80,21 @@ def inspect_audio(path: Path) -> AudioCandidate:
 
 
 def scan_library(root: Path | None = None) -> list[AudioCandidate]:
-    base = root or media_root()
-    if not base.exists():
-        return []
-    return [inspect_audio(path) for path in base.rglob("*") if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS]
+    roots = [root] if root is not None else media_roots()
+    seen: set[Path] = set()
+    candidates: list[AudioCandidate] = []
+    for base in roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            candidates.append(inspect_audio(resolved))
+    return candidates
 
 
 def _version_penalty(track: TrackIn, candidate_text: str) -> float:
