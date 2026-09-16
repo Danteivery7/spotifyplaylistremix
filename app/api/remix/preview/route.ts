@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { engineUrlForRequest } from "@/lib/server-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function engineUrl() {
-  return (process.env.AUDIO_ENGINE_URL ?? "http://localhost:8000").replace(/\/$/, "");
-}
 
 export async function GET(request: NextRequest) {
   const jobId = request.nextUrl.searchParams.get("jobId");
@@ -19,12 +16,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const response = await fetch(`${engineUrl()}/jobs/${jobId}/preview/${transition}`, { cache: "no-store" });
+    const response = await fetch(`${engineUrlForRequest(request)}/jobs/${jobId}/preview/${transition}`, { cache: "no-store" });
     if (!response.ok) {
       const text = await response.text();
       return new NextResponse(text, {
         status: response.status,
-        headers: { "content-type": response.headers.get("content-type") ?? "application/json" }
+        headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
       });
     }
 
