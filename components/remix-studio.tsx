@@ -302,7 +302,7 @@ export default function RemixStudio() {
           <div className="sectionKicker"><span>4</span> Mix status</div>
           <div className="jobHeader"><div><h2>{jobLabel(job.state)}</h2><p>{job.message}</p></div><div className={`statusDot ${job.state}`} aria-label={job.state} /></div>
           {RUNNING_STATES.includes(job.state) && (
-            <div className="renderSteps" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+            <div className="renderSteps">
               {["Finding audio", "Mapping phrases", "Planning transitions", "Rendering transitions", "Mastering"].map((label, index) => {
                 const order: Record<string, number> = { queued: 0, resolving: 0, analyzing: 1, planning: 2, rendering: 3, mastering: 4 };
                 const current = order[job.state] ?? 0;

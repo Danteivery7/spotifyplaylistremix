@@ -184,6 +184,6 @@ def render_video(audio_path: str, output_path: str, title: str) -> str:
         "-filter_complex", filter_complex,
         "-map", "[v]", "-map", "[aout]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
-        "-c:a", "copy", "-shortest", "-movflags", "+faststart", str(out),
+        "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart", str(out),
     ])
     return str(out)
