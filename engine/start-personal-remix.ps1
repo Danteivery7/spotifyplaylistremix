@@ -1,6 +1,7 @@
 param(
   [switch]$EnableStems,
-  [int]$Port = 8000
+  [int]$Port = 8000,
+  [string]$LibraryPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,10 @@ Write-Host ""
 Write-Host "Playlist Remix Studio - Personal Engine" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
+function Refresh-Path {
+  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+}
+
 function Ensure-WingetPackage {
   param([string]$Command, [string]$PackageId, [string]$Label)
   if (Get-Command $Command -ErrorAction SilentlyContinue) { return }
@@ -19,16 +24,30 @@ function Ensure-WingetPackage {
   }
   Write-Host "Installing $Label..." -ForegroundColor Yellow
   winget install --id $PackageId -e --accept-package-agreements --accept-source-agreements
-  if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) {
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-  }
+  Refresh-Path
   if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) {
     throw "$Label was installed but is not on PATH yet. Close this window, open it again, and rerun the launcher."
   }
 }
 
 if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
-  throw "Python Launcher was not found. Install Python 3.12 or newer from python.org, then run this launcher again."
+  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    throw "Python 3.12 is required and winget is unavailable. Install Python 3.12, then run this launcher again."
+  }
+  Write-Host "Installing Python 3.12..." -ForegroundColor Yellow
+  winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
+  Refresh-Path
+}
+
+$Python312Ready = $false
+try {
+  py -3.12 -V | Out-Null
+  $Python312Ready = $true
+} catch {
+  $Python312Ready = $false
+}
+if (-not $Python312Ready) {
+  throw "Python 3.12 is not available to the Python Launcher yet. Close this window, reopen it, and run the launcher again."
 }
 
 Ensure-WingetPackage -Command "ffmpeg" -PackageId "Gyan.FFmpeg" -Label "FFmpeg"
@@ -54,8 +73,19 @@ $OutputPath = Join-Path $EngineRoot "output"
 New-Item -ItemType Directory -Force -Path $MediaPath | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
 
+if (-not $LibraryPath) {
+  $LibraryPath = [Environment]::GetFolderPath("MyMusic")
+}
+if ($LibraryPath -and (Test-Path $LibraryPath)) {
+  Write-Host "Existing music library: $LibraryPath" -ForegroundColor Green
+} else {
+  $LibraryPath = ""
+  Write-Host "No Windows Music folder found. Browser uploads will still work." -ForegroundColor Yellow
+}
+
 $EngineScript = @"
 `$env:MEDIA_LIBRARY_PATH='$MediaPath'
+`$env:EXTRA_MEDIA_PATHS='$LibraryPath'
 `$env:OUTPUT_PATH='$OutputPath'
 `$env:WEB_ORIGINS='*'
 `$env:MAX_AUDIO_UPLOAD_MB='96'
@@ -70,7 +100,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-EncodedCommand", $Encoded
 Start-Sleep -Seconds 3
 try {
   $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 10
-  Write-Host "Engine online: version $($health.version)" -ForegroundColor Green
+  Write-Host "Engine online: version $($health.version) - $($health.audio_files) audio files visible" -ForegroundColor Green
 } catch {
   Write-Host "The engine window opened, but the health check is not ready yet." -ForegroundColor Yellow
 }
