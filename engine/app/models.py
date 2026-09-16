@@ -12,6 +12,7 @@ class TrackIn(BaseModel):
     durationMs: int
     imageUrl: str | None = None
     spotifyUrl: str
+    explicit: bool = False
 
 
 class PlaylistIn(BaseModel):
@@ -72,6 +73,8 @@ class ResolvedTrack(BaseModel):
     title: str
     artists: list[str]
     file_path: str
+    source_filename: str = ""
+    match_score: float = 0.0
     analysis: Analysis | None = None
 
 
