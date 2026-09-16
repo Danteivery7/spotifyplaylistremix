@@ -18,7 +18,7 @@ from .planner import plan_mix
 from .renderer import render_mix, render_transition_preview, render_video
 from .separator import stems_enabled
 
-app = FastAPI(title="Playlist Remix Engine", version="0.3.0")
+app = FastAPI(title="Playlist Remix Engine", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in os.getenv("WEB_ORIGINS", "http://localhost:3000").split(",") if origin.strip()],
@@ -86,7 +86,7 @@ def process_job(job_id: str, request: CreateJobRequest) -> None:
         update(
             job_id,
             state=JobState.rendering,
-            message=f"Rendering phrase-aligned transitions{stem_note} and subtle tempo matching…",
+            message=f"Rendering phrase-aligned transitions{stem_note} and subtle pitch-safe tempo matching…",
         )
         rendered_working = render_mix(clips, str(raw_path))
 
@@ -102,15 +102,20 @@ def process_job(job_id: str, request: CreateJobRequest) -> None:
             update(
                 job_id,
                 state=JobState.mastering,
-                message="Audio master is finished. Building the 16:9 waveform video…",
+                message="Audio master is finished. Building the 16:9 song-synced artwork video…",
                 mastering=mastering_report,
             )
-            video_path = render_video(rendered_audio, str(audio_path.with_suffix(".mp4")), request.playlist.name)
+            video_path = render_video(
+                rendered_audio,
+                str(audio_path.with_suffix(".mp4")),
+                request.playlist.name,
+                clips,
+            )
 
         update(
             job_id,
             state=JobState.complete,
-            message="Mix complete. Phrase alignment, transition rendering and final mastering are finished.",
+            message="Mix complete. Phrase alignment, transition rendering, artwork video and final mastering are finished.",
             output_audio=rendered_audio,
             output_video=video_path,
             mastering=mastering_report,
@@ -126,7 +131,7 @@ def process_job(job_id: str, request: CreateJobRequest) -> None:
 def health() -> dict[str, str | bool | int]:
     return {
         "status": "ok",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "stems_enabled": stems_enabled(),
         "audio_files": len(scan_library()),
     }
