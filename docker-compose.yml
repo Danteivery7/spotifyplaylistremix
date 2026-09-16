@@ -1,0 +1,13 @@
+services:
+  audio-engine:
+    build: ./engine
+    environment:
+      MEDIA_LIBRARY_PATH: /media
+      OUTPUT_PATH: /output
+      ENABLE_STEMS: ${ENABLE_STEMS:-false}
+      STEM_MODEL: ${STEM_MODEL:-model_bs_roformer_ep_317_sdr_12.9755.ckpt}
+    volumes:
+      - ./media:/media:ro
+      - ./engine/output:/output
+    ports:
+      - "8000:8000"
