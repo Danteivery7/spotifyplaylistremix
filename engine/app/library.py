@@ -155,6 +155,17 @@ def _rank(track: TrackIn, available: set[AudioCandidate]) -> list[tuple[float, A
     )
 
 
+def source_provider(path: Path) -> str:
+    parts = [part.lower() for part in path.resolve().parts]
+    if "external" in parts:
+        index = parts.index("external")
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    if "uploads" in parts:
+        return "upload"
+    return "library"
+
+
 def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.62) -> tuple[list[ResolvedTrack], list[str]]:
     available = set(scan_library())
     resolved: list[ResolvedTrack] = []
@@ -193,6 +204,7 @@ def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.62) -> tuple[lis
                 artists=track.artists,
                 file_path=str(best.path),
                 source_filename=best.path.name,
+                source_provider=source_provider(best.path),
                 match_score=score,
                 image_url=track.imageUrl,
             )
