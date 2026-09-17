@@ -164,12 +164,20 @@ def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.62) -> tuple[lis
         ranked = _rank(track, available)
 
         # Before declaring a track missing, try providers that explicitly expose a
-        # downloadable file for app use. Acquired files are cached in the engine
-        # media directory and then pass through the same strict matcher as local files.
+        # downloadable file. The provider match has already passed a much stricter
+        # title + artist + duration check, so preserve that verified identity even
+        # if the downloaded file itself has no useful tags or filename.
         if not ranked or ranked[0][0] < threshold:
             acquired = materialize_external(track, media_root())
             if acquired:
-                available.add(inspect_audio(acquired))
+                available.add(
+                    AudioCandidate(
+                        path=acquired,
+                        title=track.name,
+                        artists=tuple(track.artists),
+                        duration_seconds=(track.durationMs / 1000.0) if track.durationMs > 0 else 0.0,
+                    )
+                )
                 ranked = _rank(track, available)
 
         if not ranked or ranked[0][0] < threshold:
