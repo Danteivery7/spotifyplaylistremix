@@ -84,16 +84,29 @@ if ($LibraryPath -and (Test-Path $LibraryPath)) {
   Write-Host "Existing music library: $LibraryPath" -ForegroundColor Green
 } else {
   $LibraryPath = ""
-  Write-Host "No Windows Music folder found. Browser uploads and automatic providers can still work." -ForegroundColor Yellow
+  Write-Host "No Windows Music folder found. Automatic providers and browser uploads can still work." -ForegroundColor Yellow
 }
 
 if (-not $JamendoClientId) {
   $JamendoClientId = [Environment]::GetEnvironmentVariable("JAMENDO_CLIENT_ID", "User")
 }
-if ($JamendoClientId) {
-  Write-Host "Automatic downloadable-source lookup enabled for Jamendo." -ForegroundColor Green
+$SoundCloudClientId = [Environment]::GetEnvironmentVariable("SOUNDCLOUD_CLIENT_ID", "User")
+$SoundCloudClientSecret = [Environment]::GetEnvironmentVariable("SOUNDCLOUD_CLIENT_SECRET", "User")
+$SoundCloudAccessToken = [Environment]::GetEnvironmentVariable("SOUNDCLOUD_ACCESS_TOKEN", "User")
+$AudiusApiKey = [Environment]::GetEnvironmentVariable("AUDIUS_API_KEY", "User")
+$AudiusBearerToken = [Environment]::GetEnvironmentVariable("AUDIUS_BEARER_TOKEN", "User")
+$AudiusAppName = [Environment]::GetEnvironmentVariable("AUDIUS_APP_NAME", "User")
+if (-not $AudiusAppName) { $AudiusAppName = "PlaylistRemixStudio" }
+
+$Providers = @()
+if ($JamendoClientId) { $Providers += "Jamendo" }
+if ($SoundCloudAccessToken -or ($SoundCloudClientId -and $SoundCloudClientSecret)) { $Providers += "SoundCloud" }
+if ($AudiusApiKey -or $AudiusBearerToken) { $Providers += "Audius" }
+if ($Providers.Count -gt 0) {
+  Write-Host ("Automatic downloadable-source providers: " + ($Providers -join ", ")) -ForegroundColor Green
 } else {
-  Write-Host "Jamendo automatic-source lookup is not configured." -ForegroundColor DarkGray
+  Write-Host "No automatic downloadable-source providers are configured yet." -ForegroundColor DarkGray
+  Write-Host "Run SETUP_MEDIA_PROVIDERS.cmd once if you want automatic provider lookup." -ForegroundColor DarkGray
 }
 
 $EnableStemsValue = if ($EnableStems) { "true" } else { "false" }
@@ -106,6 +119,12 @@ $EngineScript = @"
 `$env:WEB_ORIGINS='*'
 `$env:MAX_AUDIO_UPLOAD_MB='96'
 `$env:JAMENDO_CLIENT_ID='$JamendoClientId'
+`$env:SOUNDCLOUD_CLIENT_ID='$SoundCloudClientId'
+`$env:SOUNDCLOUD_CLIENT_SECRET='$SoundCloudClientSecret'
+`$env:SOUNDCLOUD_ACCESS_TOKEN='$SoundCloudAccessToken'
+`$env:AUDIUS_API_KEY='$AudiusApiKey'
+`$env:AUDIUS_BEARER_TOKEN='$AudiusBearerToken'
+`$env:AUDIUS_APP_NAME='$AudiusAppName'
 Set-Location '$EngineRoot'
 & '$Python' -m uvicorn app.main:app --host 127.0.0.1 --port $Port
 "@
@@ -117,7 +136,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-EncodedCommand", $Encoded
 Start-Sleep -Seconds 3
 try {
   $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 10
-  Write-Host "Engine online: version $($health.version) - $($health.audio_files) audio files visible - stems: $($health.stems_enabled)" -ForegroundColor Green
+  Write-Host "Engine online: version $($health.version) - $($health.audio_files) cached/local audio files - stems: $($health.stems_enabled)" -ForegroundColor Green
 } catch {
   Write-Host "The engine window opened, but the health check is not ready yet." -ForegroundColor Yellow
 }
