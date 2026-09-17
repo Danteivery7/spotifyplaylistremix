@@ -1,7 +1,8 @@
 param(
   [switch]$EnableStems,
   [int]$Port = 8000,
-  [string]$LibraryPath = ""
+  [string]$LibraryPath = "",
+  [string]$JamendoClientId = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,7 +84,16 @@ if ($LibraryPath -and (Test-Path $LibraryPath)) {
   Write-Host "Existing music library: $LibraryPath" -ForegroundColor Green
 } else {
   $LibraryPath = ""
-  Write-Host "No Windows Music folder found. Browser uploads will still work." -ForegroundColor Yellow
+  Write-Host "No Windows Music folder found. Browser uploads and automatic providers can still work." -ForegroundColor Yellow
+}
+
+if (-not $JamendoClientId) {
+  $JamendoClientId = [Environment]::GetEnvironmentVariable("JAMENDO_CLIENT_ID", "User")
+}
+if ($JamendoClientId) {
+  Write-Host "Automatic downloadable-source lookup enabled for Jamendo." -ForegroundColor Green
+} else {
+  Write-Host "Jamendo automatic-source lookup is not configured." -ForegroundColor DarkGray
 }
 
 $EnableStemsValue = if ($EnableStems) { "true" } else { "false" }
@@ -95,6 +105,7 @@ $EngineScript = @"
 `$env:STEM_CACHE_PATH='$StemCachePath'
 `$env:WEB_ORIGINS='*'
 `$env:MAX_AUDIO_UPLOAD_MB='96'
+`$env:JAMENDO_CLIENT_ID='$JamendoClientId'
 Set-Location '$EngineRoot'
 & '$Python' -m uvicorn app.main:app --host 127.0.0.1 --port $Port
 "@
