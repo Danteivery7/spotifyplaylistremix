@@ -74,6 +74,7 @@ class ResolvedTrack(BaseModel):
     artists: list[str]
     file_path: str
     source_filename: str = ""
+    source_provider: str = "library"
     match_score: float = 0.0
     image_url: str | None = None
     analysis: Analysis | None = None
