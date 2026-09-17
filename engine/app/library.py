@@ -9,6 +9,7 @@ from pathlib import Path
 
 from mutagen import File as MutagenFile
 
+from .external_sources import materialize_external
 from .models import PlaylistIn, ResolvedTrack, TrackIn
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus"}
@@ -146,20 +147,35 @@ def score_file(track: TrackIn, candidate: AudioCandidate) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _rank(track: TrackIn, available: set[AudioCandidate]) -> list[tuple[float, AudioCandidate]]:
+    return sorted(
+        ((score_file(track, candidate), candidate) for candidate in available),
+        reverse=True,
+        key=lambda row: row[0],
+    )
+
+
 def resolve_playlist(playlist: PlaylistIn, threshold: float = 0.62) -> tuple[list[ResolvedTrack], list[str]]:
     available = set(scan_library())
     resolved: list[ResolvedTrack] = []
     missing: list[str] = []
 
     for track in playlist.tracks:
-        ranked = sorted(
-            ((score_file(track, candidate), candidate) for candidate in available),
-            reverse=True,
-            key=lambda row: row[0],
-        )
+        ranked = _rank(track, available)
+
+        # Before declaring a track missing, try providers that explicitly expose a
+        # downloadable file for app use. Acquired files are cached in the engine
+        # media directory and then pass through the same strict matcher as local files.
+        if not ranked or ranked[0][0] < threshold:
+            acquired = materialize_external(track, media_root())
+            if acquired:
+                available.add(inspect_audio(acquired))
+                ranked = _rank(track, available)
+
         if not ranked or ranked[0][0] < threshold:
             missing.append(f"{track.artists[0] if track.artists else 'Unknown'} — {track.name}")
             continue
+
         score, best = ranked[0]
         available.remove(best)
         resolved.append(
