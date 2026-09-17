@@ -9,6 +9,7 @@ type MatchRow = {
   title: string;
   artists: string[];
   filename: string;
+  provider?: string;
   score: number;
 };
 
@@ -18,6 +19,7 @@ type ResolveResult = {
   matched: number;
   missing: string[];
   matches: MatchRow[];
+  automatic_providers?: string[];
 };
 
 type Props = {
@@ -48,6 +50,16 @@ function normalizeEngineUrl(value: string) {
   return value.trim().replace(/\/$/, "");
 }
 
+function providerLabel(value?: string) {
+  switch ((value ?? "library").toLowerCase()) {
+    case "soundcloud": return "SoundCloud";
+    case "audius": return "Audius";
+    case "jamendo": return "Jamendo";
+    case "upload": return "Uploaded";
+    default: return "Library/cache";
+  }
+}
+
 export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
   const [result, setResult] = useState<ResolveResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -57,6 +69,7 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
   const [engineUrl, setEngineUrl] = useState("");
   const [engineConnected, setEngineConnected] = useState(false);
   const [showEngineSetup, setShowEngineSetup] = useState(false);
+  const [providers, setProviders] = useState<string[]>([]);
 
   const fingerprint = useMemo(
     () => `${playlist.id}:${playlist.tracks.map((track) => track.id).join("|")}`,
@@ -71,6 +84,7 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
 
     if (!base) {
       setEngineConnected(false);
+      setProviders([]);
       setShowEngineSetup(true);
       setProgress("Connect the personal remix engine to analyze and render audio.");
       return;
@@ -84,7 +98,12 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
         throw new Error(String(health.error ?? health.detail ?? "The personal remix engine did not pass its health check."));
       }
 
+      const configuredProviders = Array.isArray(health.automatic_providers)
+        ? health.automatic_providers.filter((value): value is string => typeof value === "string")
+        : [];
+      setProviders(configuredProviders);
       setEngineConnected(true);
+
       const response = await fetch(`${base}/media/resolve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -98,11 +117,13 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
 
       const next = body as unknown as ResolveResult;
       setResult(next);
+      if (Array.isArray(next.automatic_providers)) setProviders(next.automatic_providers);
       onReadyChange?.(next.ready);
       setShowEngineSetup(false);
       setProgress(next.ready ? "Every included song is matched to remixable audio." : `${next.matched}/${next.total} songs matched after automatic provider lookup.`);
     } catch (err) {
       setEngineConnected(false);
+      setProviders([]);
       setShowEngineSetup(true);
       setError(err instanceof Error ? err.message : "Could not reach the personal remix engine.");
     } finally {
@@ -135,6 +156,7 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
     savePersonalEngineUrl("");
     setEngineUrl("");
     setEngineConnected(false);
+    setProviders([]);
     setResult(null);
     onReadyChange?.(false);
     setShowEngineSetup(true);
@@ -203,8 +225,13 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
         <div style={{ maxWidth: 760 }}>
           <strong style={{ display: "block", fontSize: 18, marginBottom: 4 }}>Remixable audio sources</strong>
           <span style={{ color: "#9ca296", lineHeight: 1.55 }}>
-            The engine first checks cached/local audio, then automatically tries configured downloadable providers such as SoundCloud, Audius and Jamendo. Manual files are only the fallback for tracks the automatic providers cannot supply.
+            The engine checks its cache/library and automatically searches every configured provider that can explicitly supply a downloadable track. Manual files are only the fallback for songs the automatic providers cannot supply.
           </span>
+          {engineConnected && (
+            <div style={{ marginTop: 8, color: providers.length ? "#b8f7cd" : "#9ca296", fontSize: 13 }}>
+              {providers.length ? `Automatic providers active: ${providers.map(providerLabel).join(" · ")}` : "No automatic downloadable providers are configured on this engine yet."}
+            </div>
+          )}
         </div>
         <div className="successBadge" style={{ opacity: engineConnected ? 1 : .7 }}>
           {checking ? "Searching sources…" : engineConnected ? result ? `${result.matched}/${result.total} matched` : "Engine connected" : "Engine not connected"}
@@ -255,7 +282,7 @@ export default function AudioEngineStage({ playlist, onReadyChange }: Props) {
             {matches.slice(0, 30).map((match) => (
               <div key={`${match.spotify_id}-${match.filename}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "#9ca296", fontSize: 13 }}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{match.artists.join(", ")} — {match.title}</span>
-                <span style={{ flex: "0 0 auto" }}>{Math.round(match.score * 100)}% · {match.filename}</span>
+                <span style={{ flex: "0 0 auto" }}>{providerLabel(match.provider)} · {Math.round(match.score * 100)}%</span>
               </div>
             ))}
           </div>
