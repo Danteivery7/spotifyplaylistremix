@@ -1,10 +1,10 @@
-import PersonalRemixStudioAudio from "@/components/personal-remix-studio-audio";
+import PersonalRemixStudioV2 from "@/components/personal-remix-studio-v2";
 import YouTubeSourceResolver from "@/components/youtube-source-resolver";
 
 export default function Home() {
   return (
     <>
-      <PersonalRemixStudioAudio />
+      <PersonalRemixStudioV2 />
       <YouTubeSourceResolver />
     </>
   );
